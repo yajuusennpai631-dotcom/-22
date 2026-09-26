@@ -369,7 +369,7 @@ async def make_schedule_command(interaction: discord.Interaction, 予定デー�
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": f"予定データ:\n{予定データ}"}
