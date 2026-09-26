@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -109,7 +110,24 @@ def save_guild_settings():
 allowed_users = load_allowed_users()
 reaction_roles = load_reaction_roles()
 guild_settings = load_guild_settings()
-ai_chat_channels = {}
+
+GUILD_SETTINGS_DEFAULTS = {
+    "ng_words": {},
+    "spam_detection": None,
+    "remove_invite": False,
+    "log_channel_id": None,
+    "auto_replies": {},
+    "ai_chat_channel_id": None,
+    "warnings": {},
+}
+
+def get_guild_settings(guild_id: str) -> dict:
+    """ギルド設定を取得し、不足しているキーを安全に補完する（既存データは保持したまま）。"""
+    settings = guild_settings.setdefault(guild_id, {})
+    for key, default_value in GUILD_SETTINGS_DEFAULTS.items():
+        if key not in settings:
+            settings[key] = {} if isinstance(default_value, dict) else default_value
+    return settings
 
 # スパム検知用の一時メモリ
 user_message_timestamps = defaultdict(lambda: defaultdict(list))
@@ -251,6 +269,87 @@ async def lock_channel_command(interaction: discord.Interaction, 状態: str):
         await channel.set_permissions(guild.default_role, overwrite=overwrite)
         await interaction.response.send_message("🔓 **チャンネルロックを解除しました。**")
 
+WARN_AUTO_TIMEOUT_THRESHOLD = 3
+WARN_AUTO_TIMEOUT_MINUTES = 10
+
+@bot.tree.command(name="warn", description="【管理者専用】ユーザーに警告を1件追加します（一定数で自動タイムアウト）")
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+@app_commands.default_permissions(moderate_members=True)
+@is_allowed_user()
+async def warn_command(interaction: discord.Interaction, 対象ユーザー: discord.Member, 理由: str = "理由なし"):
+    guild_id = str(interaction.guild_id)
+    settings = get_guild_settings(guild_id)
+    user_key = str(対象ユーザー.id)
+
+    settings["warnings"].setdefault(user_key, [])
+    settings["warnings"][user_key].append({
+        "reason": 理由,
+        "moderator_id": interaction.user.id,
+        "timestamp": discord.utils.utcnow().isoformat()
+    })
+    warn_count = len(settings["warnings"][user_key])
+    save_guild_settings()
+
+    await interaction.response.send_message(
+        f"⚠️ {対象ユーザー.mention} に警告を追加しました。（現在 **{warn_count}件**）\n理由: `{理由}`"
+    )
+
+    embed = discord.Embed(title="⚠️ 警告追加ログ", color=discord.Color.gold(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="対象ユーザー", value=対象ユーザー.mention, inline=True)
+    embed.add_field(name="現在の警告数", value=f"{warn_count}件", inline=True)
+    embed.add_field(name="実行者", value=interaction.user.mention, inline=True)
+    embed.add_field(name="理由", value=理由, inline=False)
+    await send_log(interaction.guild, embed)
+
+    if warn_count > 0 and warn_count % WARN_AUTO_TIMEOUT_THRESHOLD == 0:
+        try:
+            until = discord.utils.utcnow() + datetime.timedelta(minutes=WARN_AUTO_TIMEOUT_MINUTES)
+            await 対象ユーザー.timeout(until, reason=f"警告{warn_count}件到達による自動タイムアウト")
+            await interaction.followup.send(
+                f"🕒 警告が **{WARN_AUTO_TIMEOUT_THRESHOLD}件** に達したため、{対象ユーザー.mention} を自動的に **{WARN_AUTO_TIMEOUT_MINUTES}分間** タイムアウトしました。"
+            )
+        except discord.Forbidden:
+            pass
+
+@bot.tree.command(name="warnings", description="【管理者専用】指定ユーザーの警告履歴を表示します")
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+@app_commands.default_permissions(moderate_members=True)
+@is_allowed_user()
+async def warnings_command(interaction: discord.Interaction, 対象ユーザー: discord.Member):
+    guild_id = str(interaction.guild_id)
+    settings = get_guild_settings(guild_id)
+    records = settings["warnings"].get(str(対象ユーザー.id), [])
+
+    if not records:
+        await interaction.response.send_message(f"{対象ユーザー.mention} に警告履歴はありません。", ephemeral=True)
+        return
+
+    embed = discord.Embed(title=f"⚠️ {対象ユーザー.name} の警告履歴（{len(records)}件）", color=discord.Color.orange())
+    for i, record in enumerate(records[-10:], start=1):
+        timestamp_text = record.get("timestamp", "")[:19].replace("T", " ")
+        embed.add_field(name=f"#{i}", value=f"理由: {record.get('reason', '不明')}\n日時: {timestamp_text}", inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="clear_warnings", description="【管理者専用】指定ユーザーの警告履歴をすべて削除します")
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+@app_commands.default_permissions(moderate_members=True)
+@is_allowed_user()
+async def clear_warnings_command(interaction: discord.Interaction, 対象ユーザー: discord.Member):
+    guild_id = str(interaction.guild_id)
+    settings = get_guild_settings(guild_id)
+    user_key = str(対象ユーザー.id)
+
+    if settings["warnings"].get(user_key):
+        settings["warnings"][user_key] = []
+        save_guild_settings()
+        await interaction.response.send_message(f"✅ {対象ユーザー.mention} の警告履歴をすべて削除しました。", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"{対象ユーザー.mention} に警告履歴はありません。", ephemeral=True)
+
 # -------------------- 🌐 外部向け：どこでも使える（User Install）コマンド --------------------
 
 @bot.tree.command(name="jst_time", description="現在の正確な日本時間(JST)を表示します")
@@ -295,6 +394,103 @@ async def shutdown_command(interaction: discord.Interaction):
     await bot.close()
 
 # -------------------- 🎉 汎用・便利コマンド --------------------
+
+@bot.tree.command(name="say", description="【許可ユーザー専用】指定した内容でボットに発言させます（DM可）")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@is_allowed_user()
+async def say_command(interaction: discord.Interaction, 内容: str, チャンネルid: str = None):
+    # 注意: discord.TextChannel型のオプションはDM(user install)コンテキストで
+    # 正しく機能しないため、文字列でチャンネルIDを受け取って手動で解決する。
+    target_channel = interaction.channel
+
+    if チャンネルid:
+        if not interaction.guild:
+            await interaction.response.send_message("❌ DM内ではチャンネルIDの指定はできません（自分とのDMに発言します）。", ephemeral=True)
+            return
+        try:
+            resolved = interaction.guild.get_channel(int(チャンネルid.strip()))
+        except ValueError:
+            resolved = None
+        if resolved is None:
+            await interaction.response.send_message("❌ 指定されたチャンネルIDが見つかりません。", ephemeral=True)
+            return
+        target_channel = resolved
+
+    destination_label = target_channel.mention if interaction.guild else "このDM"
+
+    try:
+        await target_channel.send(内容)
+        await interaction.response.send_message(f"✅ {destination_label} に発言しました。", ephemeral=True)
+
+        if interaction.guild:
+            embed = discord.Embed(title="🗣️ Sayコマンド実行ログ", color=discord.Color.blurple(), timestamp=discord.utils.utcnow())
+            embed.add_field(name="実行者", value=interaction.user.mention, inline=True)
+            embed.add_field(name="投稿先チャンネル", value=destination_label, inline=True)
+            embed.add_field(name="内容", value=内容[:1024], inline=False)
+            await send_log(interaction.guild, embed)
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ そのチャンネルに発言する権限がありません。", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ エラーが発生しました: {e}", ephemeral=True)
+
+@bot.tree.command(name="remind", description="指定した時間後にこのチャンネルでリマインドします")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@is_allowed_user()
+async def remind_command(interaction: discord.Interaction, 分後: int, 内容: str):
+    if 分後 <= 0 or 分後 > 10080:
+        await interaction.response.send_message("❌ 時間は1分〜10080分（1週間）の間で指定してください。", ephemeral=True)
+        return
+
+    # インタラクションのWebhookトークンは長時間後に失効するため、
+    # チャンネル/ユーザーを先に確保しておき、時間経過後は通常のメッセージ送信で通知する。
+    channel = interaction.channel
+    user = interaction.user
+
+    await interaction.response.send_message(
+        f"⏰ **{分後}分後** にこのチャンネルでリマインドします：「{内容}」\n"
+        f"（※ボットの再起動を挟むとこのリマインダーは消えてしまいます）",
+        ephemeral=True
+    )
+
+    async def send_reminder():
+        await asyncio.sleep(分後 * 60)
+        try:
+            await channel.send(f"⏰ {user.mention} リマインドの時間です！\n📝 「{内容}」")
+        except Exception:
+            pass
+
+    bot.loop.create_task(send_reminder())
+
+@bot.tree.command(name="poll", description="複数の選択肢から選べる投票を作成します（最大5択）")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@is_allowed_user()
+async def poll_command(
+    interaction: discord.Interaction,
+    質問: str,
+    選択肢1: str,
+    選択肢2: str,
+    選択肢3: str = None,
+    選択肢4: str = None,
+    選択肢5: str = None,
+):
+    options = [opt for opt in [選択肢1, 選択肢2, 選択肢3, 選択肢4, 選択肢5] if opt]
+    number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    description = "\n".join(f"{number_emojis[i]} {opt}" for i, opt in enumerate(options))
+
+    embed = discord.Embed(title=f"📊 {質問}", description=description, color=discord.Color.green())
+    embed.set_footer(text=f"作成者: {interaction.user.name}")
+
+    await interaction.response.send_message(embed=embed)
+    poll_message = await interaction.original_response()
+
+    for i in range(len(options)):
+        try:
+            await poll_message.add_reaction(number_emojis[i])
+        except discord.Forbidden:
+            break
 
 @bot.tree.command(name="summarize", description="指定されたWebサイトや動画(YouTube)のURLの内容を要約します")
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -532,6 +728,56 @@ async def remove_invitation_link_command(interaction: discord.Interaction, 有�
     status = "有効（検知して削除）" if 有効にする else "無効"
     await interaction.response.send_message(f"✅ 招待リンク自動削除機能を **{status}** に設定しました。", ephemeral=True)
 
+@bot.tree.command(name="ai_chat_channel", description="【サーバー専用】このチャンネルでのAI自動雑談応答をON/OFFします")
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+@app_commands.default_permissions(manage_guild=True)
+@is_allowed_user()
+async def ai_chat_channel_command(interaction: discord.Interaction, 有効にする: bool):
+    guild_id = str(interaction.guild_id)
+    settings = get_guild_settings(guild_id)
+
+    if 有効にする:
+        settings["ai_chat_channel_id"] = interaction.channel_id
+        save_guild_settings()
+        await interaction.response.send_message(
+            f"✅ {interaction.channel.mention} をAI雑談チャンネルに設定しました。\n以後、このチャンネルでの発言にAIが自動応答します。",
+            ephemeral=True
+        )
+    else:
+        settings["ai_chat_channel_id"] = None
+        save_guild_settings()
+        await interaction.response.send_message("✅ AI雑談チャンネルの設定を解除しました。", ephemeral=True)
+
+@bot.tree.command(name="settings", description="【サーバー専用】現在のBOT設定を一覧表示します")
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+@app_commands.default_permissions(manage_guild=True)
+@is_allowed_user()
+async def settings_command(interaction: discord.Interaction):
+    guild_id = str(interaction.guild_id)
+    settings = get_guild_settings(guild_id)
+
+    log_channel_text = f"<#{settings['log_channel_id']}>" if settings.get("log_channel_id") else "未設定"
+    ai_channel_text = f"<#{settings['ai_chat_channel_id']}>" if settings.get("ai_chat_channel_id") else "未設定"
+    spam = settings.get("spam_detection")
+    spam_text = f"{spam['seconds']}秒間に{spam['count']}通以上" if spam else "無効"
+    invite_text = "有効" if settings.get("remove_invite") else "無効"
+    ng_word_count = len(settings.get("ng_words", {}))
+    auto_reply_count = len(settings.get("auto_replies", {}))
+    total_warnings = sum(len(v) for v in settings.get("warnings", {}).values())
+
+    embed = discord.Embed(title="⚙️ 現在のサーバー設定", color=discord.Color.blurple())
+    embed.add_field(name="ログチャンネル", value=log_channel_text, inline=True)
+    embed.add_field(name="AI雑談チャンネル", value=ai_channel_text, inline=True)
+    embed.add_field(name="スパム検知", value=spam_text, inline=True)
+    embed.add_field(name="招待リンク削除", value=invite_text, inline=True)
+    embed.add_field(name="NGワード登録数", value=f"{ng_word_count}件", inline=True)
+    embed.add_field(name="自動返信登録数", value=f"{auto_reply_count}件", inline=True)
+    embed.add_field(name="累計警告数", value=f"{total_warnings}件", inline=True)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.tree.command(name="search", description="指定した文章のGoogle検索用リンクを生成します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -638,6 +884,8 @@ async def help_command(interaction: discord.Interaction):
         "👤 **/add_user [ユーザー]**: 【オーナー専用】使用許可ユーザーを追加します。\n"
         "🔄 **/sync**: 【オーナー専用】コマンドを強制同期します。\n"
         "🎭 **/setup_reaction_role**: リアクションロールを設定します。\n"
+        "🤖 **/ai_chat_channel**: 【サーバー管理】このチャンネルでのAI自動雑談をON/OFFします。\n"
+        "⚙️ **/settings**: 【サーバー管理】現在のBOT設定を一覧表示します。\n"
         "\n**🆕 管理・モデレーション機能**\n"
         "👑 **/give_role [ユーザー] [ロール]**: 【サーバー専用・管理者】役職を付与します。\n"
         "🔨 **/ban [ユーザー] [理由]**: 【サーバー専用・管理者】指定メンバーをBANします。\n"
@@ -645,10 +893,16 @@ async def help_command(interaction: discord.Interaction):
         "👢 **/kick [ユーザー] [理由]**: 【サーバー専用・管理者】キックします。\n"
         "🧹 **/purge [件数]**: 【サーバー専用・管理者】メッセージを一括削除します。\n"
         "🚨 **/lock_channel [状態]**: 【サーバー専用・管理者】チャンネルをロック・解除します。\n"
+        "⚠️ **/warn [ユーザー] [理由]**: 【サーバー専用・管理者】警告を追加します（{}件で自動タイムアウト）。\n"
+        "📋 **/warnings [ユーザー]**: 【サーバー専用・管理者】警告履歴を表示します。\n"
+        "🧽 **/clear_warnings [ユーザー]**: 【サーバー専用・管理者】警告履歴を削除します。\n"
+        "🗣️ **/say [内容]**: 【許可ユーザー専用】ボットに発言させます（DM可）。\n"
+        "⏰ **/remind [分後] [内容]**: 指定時間後にこのチャンネルでリマインドします。\n"
+        "📊 **/poll [質問] [選択肢...]**: 選択式の投票を作成します。\n"
         "🌐 **/jst_time**: 現在の日本時間（JST）を表示します。\n"
         "🌐 **/purge_my_messages [件数]**: 自分の発言を一括削除します。\n"
         "🛑 **/shutdown**: 【オーナー専用】ボットを安全に停止させます。"
-    )
+    ).format(WARN_AUTO_TIMEOUT_THRESHOLD)
     await interaction.response.send_message(help_text)
 
 # -------------------- サーバー監視システム --------------------
@@ -858,7 +1112,8 @@ async def on_message(message):
     if message.author.id not in OWNER_IDS and message.author.name.lower() not in allowed_users:
         return
 
-    if ai_chat_channels.get(message.channel.id, False):
+    ai_chat_channel_id = guild_settings.get(guild_id, {}).get("ai_chat_channel_id") if guild_id else None
+    if ai_chat_channel_id == message.channel.id:
         try:
             async with message.channel.typing():
                 response = client.chat.completions.create(
