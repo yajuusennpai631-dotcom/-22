@@ -119,6 +119,7 @@ GUILD_SETTINGS_DEFAULTS = {
     "auto_replies": {},
     "ai_chat_channel_id": None,
     "warnings": {},
+    "auto_nickname": None,
 }
 
 def get_guild_settings(guild_id: str) -> dict:
@@ -749,6 +750,51 @@ async def ai_chat_channel_command(interaction: discord.Interaction, 有効にす
         save_guild_settings()
         await interaction.response.send_message("✅ AI雑談チャンネルの設定を解除しました。", ephemeral=True)
 
+NICKNAME_MAX_LENGTH = 32
+
+def build_nickname(template: str, member: discord.Member) -> str:
+    """{user} をそのメンバーの表示名に置き換え、Discordの上限(32文字)に収める。"""
+    return template.replace("{user}", member.display_name)[:NICKNAME_MAX_LENGTH]
+
+@bot.tree.command(name="auto_nickname", description="【サーバー専用】新規参加者のニックネームを自動で指定した文字にします")
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+@app_commands.default_permissions(manage_nicknames=True)
+@is_allowed_user()
+@app_commands.choices(操作=[
+    app_commands.Choice(name="設定する", value="set"),
+    app_commands.Choice(name="解除する", value="off")
+])
+async def auto_nickname_command(interaction: discord.Interaction, 操作: str, ニックネーム: str = None):
+    settings = get_guild_settings(str(interaction.guild_id))
+
+    if 操作 == "off":
+        settings["auto_nickname"] = None
+        save_guild_settings()
+        await interaction.response.send_message("✅ 新規参加者のニックネーム自動設定を解除しました。", ephemeral=True)
+        return
+
+    if not ニックネーム or not ニックネーム.strip():
+        await interaction.response.send_message("❌ 設定するニックネームを入力してください。", ephemeral=True)
+        return
+    ニックネーム = ニックネーム.strip()
+    if len(ニックネーム) > NICKNAME_MAX_LENGTH:
+        await interaction.response.send_message(f"❌ ニックネームは{NICKNAME_MAX_LENGTH}文字以内で指定してください。", ephemeral=True)
+        return
+
+    settings["auto_nickname"] = ニックネーム
+    save_guild_settings()
+
+    me = interaction.guild.me
+    warn = ""
+    if not me.guild_permissions.manage_nicknames:
+        warn = "\n⚠️ ボットに「ニックネームの管理」権限がないため、このままでは変更できません。"
+    await interaction.response.send_message(
+        f"✅ 新規参加者のニックネームを自動で **「{ニックネーム}」** にします。\n"
+        f"（`{{user}}` と書くと、その人の表示名に置き換わります。例: `新入り{{user}}`）{warn}",
+        ephemeral=True
+    )
+
 @bot.tree.command(name="settings", description="【サーバー専用】現在のBOT設定を一覧表示します")
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
@@ -775,6 +821,7 @@ async def settings_command(interaction: discord.Interaction):
     embed.add_field(name="NGワード登録数", value=f"{ng_word_count}件", inline=True)
     embed.add_field(name="自動返信登録数", value=f"{auto_reply_count}件", inline=True)
     embed.add_field(name="累計警告数", value=f"{total_warnings}件", inline=True)
+    embed.add_field(name="参加時ニックネーム", value=settings.get("auto_nickname") or "未設定", inline=True)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -802,6 +849,24 @@ async def add_user_command(interaction: discord.Interaction, ユーザー: disco
     allowed_users.add(target_username)
     save_allowed_users()
     await interaction.response.send_message(f"✅ {ユーザー.mention} (ユーザー名: `{ユーザー.name}`) を許可リストに追加しました！")
+
+@bot.tree.command(name="remove_user", description="【オーナー専用】このBOTの使用許可をユーザーからはく奪します")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@is_owner()
+async def remove_user_command(interaction: discord.Interaction, ユーザー: discord.User):
+    if ユーザー.id in OWNER_IDS:
+        await interaction.response.send_message("❌ ボットオーナーの権限ははく奪できません。", ephemeral=True)
+        return
+
+    target_username = ユーザー.name.lower()
+    if target_username not in allowed_users:
+        await interaction.response.send_message(f"❌ {ユーザー.mention} は許可リストに登録されていません。", ephemeral=True)
+        return
+
+    allowed_users.discard(target_username)
+    save_allowed_users()
+    await interaction.response.send_message(f"✅ {ユーザー.mention} (ユーザー名: `{ユーザー.name}`) の使用許可をはく奪しました。")
 
 @bot.tree.command(name="sync", description="【オーナー専用】スラッシュコマンドを手動でDiscordに強制同期します")
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -882,10 +947,12 @@ async def help_command(interaction: discord.Interaction):
         "⚡ **/spam_detection**: 【サーバー管理】スパム自動検知を設定します。\n"
         "🔗 **/remove_invitation_link**: 【サーバー管理】招待リンク削除のON/OFF。\n"
         "👤 **/add_user [ユーザー]**: 【オーナー専用】使用許可ユーザーを追加します。\n"
+        "🚫 **/remove_user [ユーザー]**: 【オーナー専用】使用許可をはく奪します。\n"
         "🔄 **/sync**: 【オーナー専用】コマンドを強制同期します。\n"
         "🎭 **/setup_reaction_role**: リアクションロールを設定します。\n"
         "🤖 **/ai_chat_channel**: 【サーバー管理】このチャンネルでのAI自動雑談をON/OFFします。\n"
         "⚙️ **/settings**: 【サーバー管理】現在のBOT設定を一覧表示します。\n"
+        "🏷️ **/auto_nickname [操作] [ニックネーム]**: 【サーバー管理】新規参加者のニックネームを自動で設定します。\n"
         "\n**🆕 管理・モデレーション機能**\n"
         "👑 **/give_role [ユーザー] [ロール]**: 【サーバー専用・管理者】役職を付与します。\n"
         "🔨 **/ban [ユーザー] [理由]**: 【サーバー専用・管理者】指定メンバーをBANします。\n"
@@ -1038,6 +1105,28 @@ async def on_member_ban(guild, user):
     embed.add_field(name="実行者", value=executor_text, inline=True)
     embed.add_field(name="理由", value=reason_text, inline=False)
     await send_log(guild, embed)
+
+@bot.event
+async def on_member_join(member):
+    if member.bot:
+        return
+    template = guild_settings.get(str(member.guild.id), {}).get("auto_nickname")
+    if not template:
+        return
+    nickname = build_nickname(template, member)
+    try:
+        await member.edit(nick=nickname, reason="新規参加者のニックネーム自動設定")
+    except (discord.Forbidden, discord.HTTPException) as e:
+        embed = discord.Embed(title="🏷️ ニックネーム自動設定に失敗", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+        embed.add_field(name="対象ユーザー", value=f"{member.mention} ({member.name})", inline=True)
+        embed.add_field(name="原因", value="ボットの権限または役職順位が不足している可能性があります" if isinstance(e, discord.Forbidden) else str(e)[:200], inline=False)
+        await send_log(member.guild, embed)
+        return
+
+    embed = discord.Embed(title="🏷️ ニックネーム自動設定", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="対象ユーザー", value=f"{member.mention} ({member.name})", inline=True)
+    embed.add_field(name="設定したニックネーム", value=nickname, inline=True)
+    await send_log(member.guild, embed)
 
 @bot.event
 async def on_member_remove(member):
