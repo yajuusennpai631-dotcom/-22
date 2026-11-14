@@ -1067,6 +1067,7 @@ async def check_and_moderate_message(message: discord.Message) -> bool:
 
 @bot.event
 async def on_ready():
+    await bot.change_presence(activity=discord.CustomActivity(name="こーしんちゅー♡"))
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
     print('------')
 
