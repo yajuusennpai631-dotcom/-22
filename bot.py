@@ -18,6 +18,71 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
+
+# -------------------- 🧠 AI会話エンジン --------------------
+AI_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+AI_HISTORY_MAX_MESSAGES = 12  # 直近6往復を保持
+AI_REQUEST_TIMEOUT = 50
+ai_conversation_history = {}
+
+def ai_history_key(scope_id: int, user_id: int) -> str:
+    return f"{scope_id}:{user_id}"
+
+async def generate_ai_reply(scope_id: int, user_id: int, prompt: str) -> str:
+    """ユーザー・チャンネル単位の会話履歴を使い、イベントループを止めずにAIへ問い合わせる。"""
+    key = ai_history_key(scope_id, user_id)
+    history = ai_conversation_history.get(key, [])
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "あなたは高性能な日本語AIアシスタントです。"
+                "質問の意図を確認し、正確で分かりやすく回答してください。"
+                "不確かな情報は断定せず、必要なら前提や限界を明示してください。"
+                "会話の前後関係を踏まえ、簡潔さと十分な説明のバランスを取ってください。"
+            )
+        },
+        *history,
+        {"role": "user", "content": prompt[:6000]}
+    ]
+
+    def request():
+        return client.chat.completions.create(
+            model=AI_MODEL,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1800,
+            timeout=AI_REQUEST_TIMEOUT
+        )
+
+    response = await asyncio.wait_for(
+        asyncio.to_thread(request),
+        timeout=AI_REQUEST_TIMEOUT + 5
+    )
+    answer = (response.choices[0].message.content or "").strip()
+    if not answer:
+        raise RuntimeError("AIから空の回答が返されました。")
+
+    updated_history = [
+        *history,
+        {"role": "user", "content": prompt[:6000]},
+        {"role": "assistant", "content": answer[:6000]}
+    ][-AI_HISTORY_MAX_MESSAGES:]
+    ai_conversation_history[key] = updated_history
+
+    # 長時間稼働時にメモリが増え続けないよう、古い会話キーを整理する。
+    if len(ai_conversation_history) > 500:
+        oldest_key = next(iter(ai_conversation_history))
+        if oldest_key != key:
+            ai_conversation_history.pop(oldest_key, None)
+    return answer
+
+async def send_ai_response(destination, answer: str):
+    """Discordのメッセージ上限を超える回答を分割して送信する。"""
+    limit = 1900
+    for start in range(0, len(answer), limit):
+        await destination.send(answer[start:start + limit])
+
 # カスタムBotクラスを作成して、自動同期（setup_hook）を実装
 class AssistantBot(commands.Bot):
     def __init__(self, **kwargs):
@@ -880,23 +945,31 @@ async def sync_command(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ 同期中にエラーが発生しました: {e}")
 
-@bot.tree.command(name="ai", description="AIアシスタントに質問します")
+@bot.tree.command(name="ai", description="会話の文脈を覚えるAIアシスタントに質問します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @is_allowed_user()
 async def ai_command(interaction: discord.Interaction, 質問内容: str):
-    await interaction.response.defer()
+    await interaction.response.defer(thinking=True)
     try:
-        response = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-            messages=[
-                {"role": "system", "content": "あなたは親切なAIアシスタントです。必ず「日本語」で、質問に回答してください。"},
-                {"role": "user", "content": 質問内容}
-            ]
-        )
-        await interaction.followup.send(f"🗣️ **質問:** {質問内容}\n\n🤖 **回答:** {response.choices[0].message.content}")
+        scope_id = interaction.channel_id or interaction.user.id
+        answer = await generate_ai_reply(scope_id, interaction.user.id, 質問内容)
+        await send_ai_response(interaction.followup, f"🤖 **回答**\n{answer}")
+    except asyncio.TimeoutError:
+        await interaction.followup.send("⌛ AIの応答がタイムアウトしました。少し待ってから再試行してください。")
     except Exception as e:
-        await interaction.followup.send(f"エラーが発生しました: {e}")
+        print(f"AIコマンドエラー: {type(e).__name__}: {e}")
+        await interaction.followup.send("❌ AI応答の生成に失敗しました。API設定や利用上限を確認してください。")
+
+@bot.tree.command(name="ai_reset", description="このチャンネルでの自分のAI会話履歴をリセットします")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@is_allowed_user()
+async def ai_reset_command(interaction: discord.Interaction):
+    scope_id = interaction.channel_id or interaction.user.id
+    key = ai_history_key(scope_id, interaction.user.id)
+    ai_conversation_history.pop(key, None)
+    await interaction.response.send_message("🧹 このチャンネルでのAI会話履歴をリセットしました。", ephemeral=True)
 
 @bot.tree.command(name="setup_reaction_role", description="メッセージに絵文字リアクションで自動ロール付与を設定します")
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -1205,16 +1278,13 @@ async def on_message(message):
     if ai_chat_channel_id == message.channel.id:
         try:
             async with message.channel.typing():
-                response = client.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[
-                        {"role": "system", "content": "あなたは親切なAIアシスタントです。必ず「日本語」で、ユーザーと日常会話をしてください。"},
-                        {"role": "user", "content": message.content}
-                    ]
-                )
-            await message.channel.send(response.choices[0].message.content)
-        except Exception:
-            pass
+                answer = await generate_ai_reply(message.channel.id, message.author.id, message.content)
+            await send_ai_response(message.channel, answer)
+        except asyncio.TimeoutError:
+            await message.reply("⌛ AIの応答がタイムアウトしました。少し待ってから再試行してください。", mention_author=False)
+        except Exception as e:
+            print(f"AIチャットエラー: {type(e).__name__}: {e}")
+            await message.reply("❌ AI応答の生成に失敗しました。管理者にAPI設定を確認してもらってください。", mention_author=False)
 
 @bot.event
 async def on_raw_reaction_add(payload):
