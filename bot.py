@@ -200,15 +200,6 @@ user_message_timestamps = defaultdict(lambda: defaultdict(list))
 
 # -------------------- セキュリティ制限 --------------------
 
-def is_allowed_user():
-    async def predicate(interaction: discord.Interaction) -> bool:
-        user_name = interaction.user.name.lower()
-        if interaction.user.id in OWNER_IDS or user_name in allowed_users:
-            return True
-        await interaction.response.send_message("❌ あなたはこのボットを使用する権限がありません。", ephemeral=True)
-        return False
-    return app_commands.check(predicate)
-
 def is_owner():
     async def predicate(interaction: discord.Interaction) -> bool:
         if interaction.user.id in OWNER_IDS:
@@ -239,7 +230,6 @@ async def send_log(guild: discord.Guild, embed: discord.Embed):
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(administrator=True)
-@is_allowed_user()
 async def give_role_command(interaction: discord.Interaction, 対象ユーザー: discord.Member, 付与する役職: discord.Role):
     try:
         await 対象ユーザー.add_roles(付与する役職)
@@ -257,7 +247,6 @@ async def give_role_command(interaction: discord.Interaction, 対象ユーザー
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(administrator=True)
-@is_allowed_user()
 async def ban_command(interaction: discord.Interaction, 対象ユーザー: discord.Member, 理由: str = "理由なし"):
     try:
         await 対象ユーザー.ban(reason=理由)
@@ -269,7 +258,6 @@ async def ban_command(interaction: discord.Interaction, 対象ユーザー: disc
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(administrator=True)
-@is_allowed_user()
 async def timeout_command(interaction: discord.Interaction, 対象ユーザー: discord.Member, 時間分: int, 理由: str = "理由なし"):
     if 時間分 <= 0:
         await interaction.response.send_message("❌ 時間は1分以上で指定してください。", ephemeral=True)
@@ -285,7 +273,6 @@ async def timeout_command(interaction: discord.Interaction, 対象ユーザー: 
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(administrator=True)
-@is_allowed_user()
 async def kick_command(interaction: discord.Interaction, 対象ユーザー: discord.Member, 理由: str = "理由なし"):
     try:
         await 対象ユーザー.kick(reason=理由)
@@ -297,7 +284,6 @@ async def kick_command(interaction: discord.Interaction, 対象ユーザー: dis
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(administrator=True)
-@is_allowed_user()
 async def purge_command(interaction: discord.Interaction, 件数: int):
     if 件数 < 1 or 件数 > 100:
         await interaction.response.send_message("❌ 削除できるメッセージは 1〜100 件の間のみです。", ephemeral=True)
@@ -314,7 +300,6 @@ async def purge_command(interaction: discord.Interaction, 件数: int):
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(administrator=True)
-@is_allowed_user()
 @app_commands.choices(状態=[
     app_commands.Choice(name="ロックする", value="lock"),
     app_commands.Choice(name="ロック解除する", value="unlock")
@@ -342,7 +327,6 @@ WARN_AUTO_TIMEOUT_MINUTES = 10
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(moderate_members=True)
-@is_allowed_user()
 async def warn_command(interaction: discord.Interaction, 対象ユーザー: discord.Member, 理由: str = "理由なし"):
     guild_id = str(interaction.guild_id)
     settings = get_guild_settings(guild_id)
@@ -382,7 +366,6 @@ async def warn_command(interaction: discord.Interaction, 対象ユーザー: dis
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(moderate_members=True)
-@is_allowed_user()
 async def warnings_command(interaction: discord.Interaction, 対象ユーザー: discord.Member):
     guild_id = str(interaction.guild_id)
     settings = get_guild_settings(guild_id)
@@ -403,7 +386,6 @@ async def warnings_command(interaction: discord.Interaction, 対象ユーザー:
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(moderate_members=True)
-@is_allowed_user()
 async def clear_warnings_command(interaction: discord.Interaction, 対象ユーザー: discord.Member):
     guild_id = str(interaction.guild_id)
     settings = get_guild_settings(guild_id)
@@ -421,7 +403,6 @@ async def clear_warnings_command(interaction: discord.Interaction, 対象ユー�
 @bot.tree.command(name="jst_time", description="現在の正確な日本時間(JST)を表示します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def jst_time_command(interaction: discord.Interaction):
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     now_jst = now_utc + datetime.timedelta(hours=9)
@@ -431,7 +412,6 @@ async def jst_time_command(interaction: discord.Interaction):
 @bot.tree.command(name="purge_my_messages", description="このチャンネル内の「あなたのメッセージだけ」を最大100件まで一括削除します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def purge_my_messages_command(interaction: discord.Interaction, 件数: int):
     if 件数 < 1 or 件数 > 100:
         await interaction.response.send_message("❌ 削除できるメッセージは 1〜100 件の間のみです。", ephemeral=True)
@@ -461,10 +441,9 @@ async def shutdown_command(interaction: discord.Interaction):
 
 # -------------------- 🎉 汎用・便利コマンド --------------------
 
-@bot.tree.command(name="say", description="【許可ユーザー専用】指定した内容でボットに発言させます（DM可）")
+@bot.tree.command(name="say", description="指定した内容でボットに発言させます（DM可）")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def say_command(interaction: discord.Interaction, 内容: str, チャンネルid: str = None):
     # 注意: discord.TextChannel型のオプションはDM(user install)コンテキストで
     # 正しく機能しないため、文字列でチャンネルIDを受け取って手動で解決する。
@@ -503,7 +482,6 @@ async def say_command(interaction: discord.Interaction, 内容: str, チャン�
 @bot.tree.command(name="remind", description="指定した時間後にこのチャンネルでリマインドします")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def remind_command(interaction: discord.Interaction, 分後: int, 内容: str):
     if 分後 <= 0 or 分後 > 10080:
         await interaction.response.send_message("❌ 時間は1分〜10080分（1週間）の間で指定してください。", ephemeral=True)
@@ -532,7 +510,6 @@ async def remind_command(interaction: discord.Interaction, 分後: int, 内容: 
 @bot.tree.command(name="poll", description="複数の選択肢から選べる投票を作成します（最大5択）")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def poll_command(
     interaction: discord.Interaction,
     質問: str,
@@ -561,7 +538,6 @@ async def poll_command(
 @bot.tree.command(name="summarize", description="指定されたWebサイトや動画(YouTube)のURLの内容を要約します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def summarize_command(interaction: discord.Interaction, url: str):
     await interaction.response.defer()
     
@@ -620,7 +596,6 @@ async def summarize_command(interaction: discord.Interaction, url: str):
 @bot.tree.command(name="make_schedule", description="今日の予定やタスクから時間割を作成します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def make_schedule_command(interaction: discord.Interaction, 予定データ: str):
     await interaction.response.defer()
     
@@ -653,7 +628,6 @@ async def make_schedule_command(interaction: discord.Interaction, 予定デー�
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_guild=True)
-@is_allowed_user()
 async def set_log_channel_command(interaction: discord.Interaction, チャンネル: discord.TextChannel = None):
     guild_id = str(interaction.guild_id)
     if guild_id not in guild_settings:
@@ -672,7 +646,6 @@ async def set_log_channel_command(interaction: discord.Interaction, チャンネ
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_messages=True)
-@is_allowed_user()
 @app_commands.choices(操作=[
     app_commands.Choice(name="追加・更新する", value="set"),
     app_commands.Choice(name="削除する", value="remove")
@@ -705,7 +678,6 @@ async def auto_reply_command(interaction: discord.Interaction, 操作: str, 反�
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_messages=True)
-@is_allowed_user()
 @app_commands.choices(処罰=[
     app_commands.Choice(name="メッセージ削除のみ", value="delete"),
     app_commands.Choice(name="タイムアウト", value="timeout")
@@ -740,7 +712,6 @@ async def add_ng_words_command(
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_messages=True)
-@is_allowed_user()
 async def remove_ng_words_command(interaction: discord.Interaction, 削除するngワード: str):
     guild_id = str(interaction.guild_id)
     if guild_id in guild_settings and "ng_words" in guild_settings[guild_id]:
@@ -755,7 +726,6 @@ async def remove_ng_words_command(interaction: discord.Interaction, 削除する
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_messages=True)
-@is_allowed_user()
 async def spam_detection_command(interaction: discord.Interaction, 秒: int, メッセージ数: int, 有効化: bool = True):
     guild_id = str(interaction.guild_id)
     if guild_id not in guild_settings:
@@ -782,7 +752,6 @@ async def spam_detection_command(interaction: discord.Interaction, 秒: int, メ
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_messages=True)
-@is_allowed_user()
 async def remove_invitation_link_command(interaction: discord.Interaction, 有効にする: bool):
     guild_id = str(interaction.guild_id)
     if guild_id not in guild_settings:
@@ -798,7 +767,6 @@ async def remove_invitation_link_command(interaction: discord.Interaction, 有�
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_guild=True)
-@is_allowed_user()
 async def ai_chat_channel_command(interaction: discord.Interaction, 有効にする: bool):
     guild_id = str(interaction.guild_id)
     settings = get_guild_settings(guild_id)
@@ -825,7 +793,6 @@ def build_nickname(template: str, member: discord.Member) -> str:
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_nicknames=True)
-@is_allowed_user()
 @app_commands.choices(操作=[
     app_commands.Choice(name="設定する", value="set"),
     app_commands.Choice(name="解除する", value="off")
@@ -864,7 +831,6 @@ async def auto_nickname_command(interaction: discord.Interaction, 操作: str, �
 @app_commands.allowed_installs(guilds=True, users=False)
 @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 @app_commands.default_permissions(manage_guild=True)
-@is_allowed_user()
 async def settings_command(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     settings = get_guild_settings(guild_id)
@@ -893,7 +859,6 @@ async def settings_command(interaction: discord.Interaction):
 @bot.tree.command(name="search", description="指定した文章のGoogle検索用リンクを生成します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def search_command(interaction: discord.Interaction, 検索ワード: str):
     encoded_query = urllib.parse.quote_plus(検索ワード)
     search_url = f"https://www.google.com/search?q={encoded_query}"
@@ -948,7 +913,6 @@ async def sync_command(interaction: discord.Interaction):
 @bot.tree.command(name="ai", description="会話の文脈を覚えるAIアシスタントに質問します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def ai_command(interaction: discord.Interaction, 質問内容: str):
     await interaction.response.defer(thinking=True)
     try:
@@ -964,7 +928,6 @@ async def ai_command(interaction: discord.Interaction, 質問内容: str):
 @bot.tree.command(name="ai_reset", description="このチャンネルでの自分のAI会話履歴をリセットします")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def ai_reset_command(interaction: discord.Interaction):
     scope_id = interaction.channel_id or interaction.user.id
     key = ai_history_key(scope_id, interaction.user.id)
@@ -974,7 +937,6 @@ async def ai_reset_command(interaction: discord.Interaction):
 @bot.tree.command(name="setup_reaction_role", description="メッセージに絵文字リアクションで自動ロール付与を設定します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 @app_commands.default_permissions(manage_roles=True)
 async def setup_reaction_role_command(interaction: discord.Interaction, メッセージid: str, 絵文字: str, ロール: discord.Role):
     if not interaction.guild:
@@ -1004,7 +966,6 @@ async def setup_reaction_role_command(interaction: discord.Interaction, メッ�
 @bot.tree.command(name="help", description="コマンドリストを表示します")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_allowed_user()
 async def help_command(interaction: discord.Interaction):
     help_text = (
         "### 🤖 コマンドリスト\n"
@@ -1271,10 +1232,6 @@ async def on_message(message):
                     return  
                 except Exception:
                     pass
-
-    if message.author.id not in OWNER_IDS and message.author.name.lower() not in allowed_users:
-        return
-
     ai_chat_channel_id = guild_settings.get(guild_id, {}).get("ai_chat_channel_id") if guild_id else None
     if ai_chat_channel_id == message.channel.id:
         try:
