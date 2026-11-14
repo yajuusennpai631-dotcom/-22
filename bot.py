@@ -1009,7 +1009,8 @@ async def help_command(interaction: discord.Interaction):
     help_text = (
         "### 🤖 コマンドリスト\n"
         "📋 **/help**: コマンドリストを表示します。\n"
-        "💬 **/ai [質問]**: AIに質問します。\n"
+        "💬 **/ai [質問]**: 会話の文脈を踏まえてAIに質問します。\n"
+        "🧹 **/ai_reset**: このチャンネルでの自分のAI会話履歴をリセットします。\n"
         "🔍 **/search [検索語]**: Googleの検索リンクを作ります。\n"
         "🗣️ **/auto_reply**: 【サーバー管理】自動返信を設定・削除します。\n"
         "📰 **/summarize [URL]**: WebサイトやYouTube動画の内容を要約します。\n"
