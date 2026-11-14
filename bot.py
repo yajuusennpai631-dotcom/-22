@@ -870,33 +870,7 @@ async def search_command(interaction: discord.Interaction, 検索ワード: str)
     )
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="add_user", description="【オーナー専用】このBOTを使用できるユーザーを追加します")
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_owner()
-async def add_user_command(interaction: discord.Interaction, ユーザー: discord.User):
-    target_username = ユーザー.name.lower()
-    allowed_users.add(target_username)
-    save_allowed_users()
-    await interaction.response.send_message(f"✅ {ユーザー.mention} (ユーザー名: `{ユーザー.name}`) を許可リストに追加しました！")
 
-@bot.tree.command(name="remove_user", description="【オーナー専用】このBOTの使用許可をユーザーからはく奪します")
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@is_owner()
-async def remove_user_command(interaction: discord.Interaction, ユーザー: discord.User):
-    if ユーザー.id in OWNER_IDS:
-        await interaction.response.send_message("❌ ボットオーナーの権限ははく奪できません。", ephemeral=True)
-        return
-
-    target_username = ユーザー.name.lower()
-    if target_username not in allowed_users:
-        await interaction.response.send_message(f"❌ {ユーザー.mention} は許可リストに登録されていません。", ephemeral=True)
-        return
-
-    allowed_users.discard(target_username)
-    save_allowed_users()
-    await interaction.response.send_message(f"✅ {ユーザー.mention} (ユーザー名: `{ユーザー.name}`) の使用許可をはく奪しました。")
 
 @bot.tree.command(name="sync", description="【オーナー専用】スラッシュコマンドを手動でDiscordに強制同期します")
 @app_commands.allowed_installs(guilds=True, users=True)
